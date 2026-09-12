@@ -1,0 +1,15 @@
+# Stops a node drain from taking every replica at once. Without this, a cluster
+# upgrade can evict both pods in the same moment and the site is down for the
+# length of a cold start.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "peithos.fullname" . }}
+  labels:
+    {{- include "peithos.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "peithos.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: web

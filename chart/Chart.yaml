@@ -1,0 +1,6 @@
+apiVersion: v2
+name: peithos
+description: The Peithos web app and its scheduled worker, on Kubernetes.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

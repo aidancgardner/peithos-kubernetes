@@ -1,0 +1,90 @@
+# Defaults are the local k3d values. A real environment overrides this file
+# rather than editing templates, which is the whole point of the split.
+
+image:
+  repository: peithos-web
+  tag: "0.1.1"
+  # Never :latest. A tag you cannot pin is a deploy you cannot roll back.
+  pullPolicy: IfNotPresent
+
+web:
+  replicaCount: 2
+  port: 3000
+
+  # requests are what the scheduler reserves; limits are the hard cgroup cap.
+  # Requests too high and pods will not fit. No limits at all and one bad pod
+  # can starve its neighbours on the node.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilizationPercentage: 70
+
+ingress:
+  enabled: true
+  className: traefik          # k3d ships traefik by default
+  host: peithos.localhost
+
+# Non-secret configuration. Visible in `kubectl get configmap -o yaml`, so
+# nothing sensitive belongs here.
+config:
+  NODE_ENV: production
+  NEXT_TELEMETRY_DISABLED: "1"
+
+# Placeholders only. Real values come from a secret manager and are never
+# committed. See README for how this would be wired in a real cluster.
+secrets:
+  SUPABASE_SERVICE_ROLE_KEY: "placeholder-not-a-real-key"
+  STRIPE_SECRET_KEY: "placeholder-not-a-real-key"
+
+# The scheduled worker. Same image as the web pods, different entrypoint,
+# which is why the Dockerfile copies scripts/ into the runtime stage.
+#
+# The default command is a heartbeat: it calls the web Service by its in-cluster
+# DNS name and fails loudly if the app is not answering. It needs no credentials,
+# so it runs honestly on a laptop cluster.
+#
+# In a real environment this is where the reconciler goes:
+#   command: ["node", "scripts/staging/reconcile-orders.mjs"]
+# with SUPABASE_SERVICE_ROLE_KEY and STRIPE_SECRET_KEY coming from the Secret
+# below, which is already wired into envFrom.
+cron:
+  enabled: true
+  schedule: "*/5 * * * *"
+  # --input-type=module because `node -e` defaults to CommonJS, where the
+  # top-level await below is a syntax error.
+  command: ["node", "--input-type=module", "-e"]
+  args:
+    - |
+      const url = process.env.TARGET_URL;
+      const r = await fetch(url);
+      const body = await r.json();
+      if (!r.ok || !body.ok) {
+        console.error("heartbeat FAILED", r.status, JSON.stringify(body));
+        process.exit(1);
+      }
+      console.log("heartbeat ok", JSON.stringify(body));
+  # How many finished jobs to keep. Keeping failures longer than successes is
+  # deliberate: the failures are the ones you need to read.
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  # If a job is still running when the next fire is due, skip rather than run
+  # two copies of the reconciler over the same rows.
+  concurrencyPolicy: Forbid
+  backoffLimit: 2
+  activeDeadlineSeconds: 300
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 384Mi

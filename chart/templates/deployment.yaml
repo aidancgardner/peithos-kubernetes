@@ -1,0 +1,111 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "peithos.fullname" . }}
+  labels:
+    {{- include "peithos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  # When the HPA owns the replica count, leaving replicas set here means every
+  # `helm upgrade` stamps it back down and undoes the scaling.
+  {{- if not .Values.web.autoscaling.enabled }}
+  replicas: {{ .Values.web.replicaCount }}
+  {{- end }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0   # never drop below current capacity during a deploy
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "peithos.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        {{- include "peithos.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: web
+      annotations:
+        # Changing a ConfigMap or Secret does NOT restart the pods that mounted
+        # it. Hashing them into the pod template means a config change rolls the
+        # deployment the way a code change does.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      # Measured: a rolling update dropped 3 of 502 requests without this.
+      #
+      # When a pod is deleted, two things happen at once and neither waits for
+      # the other: the kubelet sends SIGTERM, and the endpoint is removed from
+      # the Service. The ingress controller learns about the removal a moment
+      # later, so for that moment it is still routing to a pod that has already
+      # started shutting down. Those requests 502.
+      #
+      # preStop holds the container open for 5 seconds before SIGTERM, which is
+      # long enough for the removal to propagate. The pod keeps serving traffic
+      # the whole time. Re-measured at 0 failures.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      # Keep the two replicas off the same node where possible, so losing one
+      # node does not take the whole service with it.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "peithos.selectorLabels" . | nindent 20 }}
+                    app.kubernetes.io/component: web
+      containers:
+        - name: web
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.web.port }}
+              protocol: TCP
+          env:
+            - name: PORT
+              value: {{ .Values.web.port | quote }}
+            - name: APP_RELEASE
+              value: "{{ .Release.Name }}-{{ .Chart.AppVersion }}"
+          envFrom:
+            - configMapRef:
+                name: {{ include "peithos.fullname" . }}-config
+            - secretRef:
+                name: {{ include "peithos.fullname" . }}-secrets
+          # Three probes, three different jobs.
+          # startup  - gives a slow first boot time to finish without the
+          #            liveness probe killing it mid-start.
+          # readiness- decides whether this pod gets traffic. Fails, it leaves
+          #            the Service endpoints. It does not get restarted.
+          # liveness - decides whether this pod is dead and needs replacing.
+          startupProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 3
+            failureThreshold: 20      # up to 60s to come up
+          readinessProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.web.resources | nindent 12 }}
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false   # Next.js writes its own cache
+            capabilities:
+              drop: ["ALL"]

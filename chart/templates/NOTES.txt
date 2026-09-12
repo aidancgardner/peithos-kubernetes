@@ -1,0 +1,16 @@
+{{ .Chart.Name }} {{ .Chart.AppVersion }} is installed as release {{ .Release.Name }}.
+
+Watch it come up:
+  kubectl get pods -w -l app.kubernetes.io/instance={{ .Release.Name }}
+
+{{- if .Values.ingress.enabled }}
+
+Reach it (k3d maps the load balancer to localhost:8080):
+  curl -H 'Host: {{ .Values.ingress.host }}' http://localhost:8080/api/health
+{{- end }}
+{{- if .Values.cron.enabled }}
+
+The scheduled worker runs {{ .Values.cron.schedule }}. Run it now instead of waiting:
+  kubectl create job --from=cronjob/{{ include "peithos.fullname" . }}-worker manual-1
+  kubectl logs job/manual-1
+{{- end }}

@@ -1,0 +1,10 @@
+node_modules
+.next
+.git
+.github
+jarvis
+jarvis-restore
+scratchpad
+*.md
+.env*
+k8s/

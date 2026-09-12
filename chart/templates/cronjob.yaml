@@ -1,0 +1,56 @@
+{{- if .Values.cron.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "peithos.fullname" . }}-worker
+  labels:
+    {{- include "peithos.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  schedule: {{ .Values.cron.schedule | quote }}
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: {{ .Values.cron.concurrencyPolicy }}
+  successfulJobsHistoryLimit: {{ .Values.cron.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.cron.failedJobsHistoryLimit }}
+  # If the controller was down over a fire time, do not stampede through every
+  # missed run once it comes back.
+  startingDeadlineSeconds: 120
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.cron.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.cron.activeDeadlineSeconds }}
+      template:
+        metadata:
+          labels:
+            {{- include "peithos.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: worker
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            fsGroup: 1001
+          containers:
+            - name: worker
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: {{ toJson .Values.cron.command }}
+              args:
+                {{- toYaml .Values.cron.args | nindent 16 }}
+              env:
+                # Service discovery by DNS. <service>.<namespace>.svc.cluster.local
+                # resolves inside the cluster with no address hardcoded anywhere.
+                - name: TARGET_URL
+                  value: "http://{{ include "peithos.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local/api/health"
+              envFrom:
+                - configMapRef:
+                    name: {{ include "peithos.fullname" . }}-config
+                - secretRef:
+                    name: {{ include "peithos.fullname" . }}-secrets
+              resources:
+                {{- toYaml .Values.cron.resources | nindent 16 }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+{{- end }}
