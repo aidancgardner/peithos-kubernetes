@@ -3,23 +3,20 @@
 The Helm chart and Dockerfile that run [peithos.ai](https://peithos.ai) on Kubernetes:
 one long running web service and one scheduled worker, on a three node cluster.
 
-**About this repository.** The application itself lives in a private repo, so what
-is here is the deployment: the chart, the multi stage Dockerfile, and the health
-endpoint the probes call. The chart works against any Next.js application that
-serves `/api/health` and copies its `scripts/` directory into the runtime image.
-
-Everything under "Verified, not assumed" below was measured on the running
-cluster. The first measurement found a real defect, which is the part worth
-reading.
-
----
-
-The Peithos web app and its scheduled worker, running on a three node
-Kubernetes cluster as a Helm chart.
-
 This is not a tutorial cluster with an nginx pod in it. It runs the same Next.js
-application that serves peithos.ai, from the same repository, with the same
-scheduled job that reconciles orders in production.
+application that serves peithos.ai, from the same repository, with the same scheduled
+job that reconciles orders in production.
+
+**The part worth reading is [Verified, not assumed](#verified-not-assumed).** Every
+claim here was measured on the running cluster, and the first measurement found a real
+defect: a rolling update dropped **3 of 502 requests**. Tracing that to the race between
+SIGTERM and endpoint withdrawal, fixing it, and remeasuring at **0 of 800** is most of
+what this repository is for.
+
+**About this repository.** The application itself lives in a private repo, so what is
+here is the deployment: the chart, the multi stage Dockerfile, and the health endpoint
+the probes call. The chart works against any Next.js application that serves
+`/api/health` and copies its `scripts/` directory into the runtime image.
 
 ## Why it exists
 
